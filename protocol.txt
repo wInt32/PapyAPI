@@ -1,0 +1,25 @@
+PapyAPI protocol specification
+
+C->S (from client to server)
+S->C (from server to client)
+
+1) Handshake
+
+"PapyAPI"    C->S
+"SUCCESS"    S->C
+
+2) General request
+
+"request request_data\n"     C->S
+"SUCCESS\n" ("FAILURE\n")    S->C
+"Message to client\n"        S->C
+
+
+3) Run Command
+
+"runcmd <command>\n"       C->S
+"SUCCESS\n" ("FAILURE\n")  S->C
+"\n"                       S->C
+
+4) Set block
+"setblock <world> <x> <y> <z> <block>\n" C->S

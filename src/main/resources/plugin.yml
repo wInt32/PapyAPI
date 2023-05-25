@@ -1,0 +1,8 @@
+name: PapyAPI
+version: '${version}-RC9'
+main: me.papyapi.PapyAPI
+api-version: 1.19
+commands:
+  papy:
+    description: "Main command for controlling PapyAPI"
+    permission: "papyapi.papy"
