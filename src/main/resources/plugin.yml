@@ -1,5 +1,5 @@
 name: PapyAPI
-version: '${version}-RC9'
+version: '${version}'
 main: me.papyapi.PapyAPI
 api-version: 1.19
 commands:
