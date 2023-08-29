@@ -18,7 +18,7 @@ an info message. On success, message can be empty.
   
 Response format:  
 C LL "SUCCESS\nInfo\n"  
-or
+or  
 C LL "FAILURE\nInfo\n"  
 
 ## Current functions
