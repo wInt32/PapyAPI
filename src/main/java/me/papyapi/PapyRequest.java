@@ -8,6 +8,7 @@ public class PapyRequest {
     private final String requestBody;
     private final PapyRequestType requestType;
     private boolean invalid = false;
+    public int number = 0;
 
     public PapyRequest(String requestBody) {
         this.requestBody = requestBody;
@@ -33,6 +34,12 @@ public class PapyRequest {
             }
             case "setblock" -> {
                 return PapyRequestType.SET_BLOCK;
+            }
+            case "async_setblock" -> {
+                return PapyRequestType.ASYNC_SET_BLOCK;
+            }
+            case "sync" -> {
+                return PapyRequestType.SYNC;
             }
             default -> {
                 return PapyRequestType.UNIMPLEMENTED;

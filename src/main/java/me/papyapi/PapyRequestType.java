@@ -6,4 +6,6 @@ public enum PapyRequestType {
     CLOSE_CONNECTION,
     PING,
     SET_BLOCK,
+    ASYNC_SET_BLOCK,
+    SYNC,
 }

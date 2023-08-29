@@ -1,32 +1,44 @@
 package me.papyapi;
 
+import jdk.jfr.StackTrace;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextColor;
+import net.kyori.adventure.text.format.TextDecoration;
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
-import org.bukkit.block.data.BlockData;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
-import org.bukkit.material.Cauldron;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitScheduler;
+import org.jetbrains.annotations.Debug;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
+import java.util.Arrays;
+import java.util.LinkedList;
+import java.util.Queue;
+import java.util.concurrent.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public final class PapyAPI extends JavaPlugin implements PapyRequestDispatcher, CommandExecutor {
 
     private Logger logger;
-
     private PapyServer papyServer;
+
+    private final BlockingQueue<PapyResponse> asyncResponseQueue = new LinkedBlockingQueue<>();
+    private final BlockingQueue<SetBlockRequest> asyncSetBlockRequestQueue = new LinkedBlockingQueue<>();
+
+    public PapyAPI papyAPI;
+    private boolean debugEnabled = false;
 
     @Override
     public void onEnable() {
+        this.papyAPI = this;
         logger = getLogger();
         papyServer = new PapyServer("0.0.0.0", 32932, this);
 
@@ -38,8 +50,30 @@ public final class PapyAPI extends JavaPlugin implements PapyRequestDispatcher, 
         papyServer.stop();
     }
 
+    private PapyResponse setBlock(String worldname, int x, int y, int z, String blockname) {
+        World world = getServer().getWorld(worldname);
+        if (world == null) {
+            return new PapyResponse(false, "World not found");
+        }
+
+        Material material = Material.matchMaterial(blockname);
+        if (material == null) {
+            return new PapyResponse(false, "Invalid block");
+        }
+
+        Block block = world.getBlockAt(x, y, z);
+        block.setType(material);
+
+
+        return new PapyResponse(true);
+    }
+
+
+    public boolean syncMsgEnabled = false;
     @Override
-    public PapyResponse dispatch(PapyRequest request) {
+    public PapyResponse dispatch(PapyRequest request) throws InterruptedException {
+
+        log_debug("Dispatching request #" + request.number);
 
         if (request.isInvalid())
             return new PapyResponse(false, "Invalid request.");
@@ -64,46 +98,96 @@ public final class PapyAPI extends JavaPlugin implements PapyRequestDispatcher, 
                 });
             }
             case CLOSE_CONNECTION -> {
-                logger.log(Level.INFO, "Closing client socket...");
+                log_info("Client disconnected.");
                 result.complete(new PapyResponse(true, "Connection closed.", true));
             }
 
             case PING -> {
-                logger.log(Level.INFO, "PING!");
+                log_info("PING");
                 result.complete(new PapyResponse(true, "PONG!"));
             }
 
             case SET_BLOCK -> {
                 SetBlockRequest setBlockRequest = new SetBlockRequest(request);
-                log_info(setBlockRequest.getBody());
+                log_debug(setBlockRequest.getBody());
                 new BukkitRunnable() {
                     @Override
                     public void run() {
-                        World world = getServer().getWorld(setBlockRequest.world);
-                        if (world == null) {
-                            result.complete(new PapyResponse(false, "World \""+ setBlockRequest.world +"\" not found."));
-                            return;
-                        }
-
-
-                        try {
-                            Material material = Material.matchMaterial(setBlockRequest.block);
-                            //BlockData blockData = getServer().createBlockData(setBlockRequest.block);
-                            assert material != null;
-                            Block block = world.getBlockAt(setBlockRequest.x, setBlockRequest.y, setBlockRequest.z);
-                            block.setType(material);
-
-                            //world.setBlockData(setBlockRequest.x, setBlockRequest.y, setBlockRequest.z, getServer().createBlockData(material));
-                        } catch (Exception ignore) {
-                            result.complete(new PapyResponse(false, "Invalid BlockData: \""+setBlockRequest.block+"\"."));
-                            return;
-                        }
-
-
-                        result.complete(new PapyResponse(true));
+                        result.complete(setBlock(
+                                setBlockRequest.world,
+                                setBlockRequest.x,
+                                setBlockRequest.y,
+                                setBlockRequest.z,
+                                setBlockRequest.block
+                        ));
                     }
-                }.runTask(this);
+                }.runTask(papyAPI);
 
+            }
+            case ASYNC_SET_BLOCK -> {
+                SetBlockRequest setBlockRequest = new SetBlockRequest(request);
+                log_debug(setBlockRequest.getBody());
+                asyncSetBlockRequestQueue.put(setBlockRequest);
+                return new PapyResponse(true);
+            }
+
+            case SYNC -> {
+                if (syncMsgEnabled)
+                    log_info("Syncing...");
+                else
+                    log_debug("Syncing...");
+
+                asyncResponseQueue.clear();
+                int setBlockRequestCount = asyncSetBlockRequestQueue.size();
+                CountDownLatch latch = new CountDownLatch(setBlockRequestCount);
+
+                if (asyncSetBlockRequestQueue.isEmpty())
+                    return new PapyResponse(false, "No async data");
+
+                log_debug(setBlockRequestCount + " async setblock requests");
+
+                // async set block requests
+                new BukkitRunnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            for (int i = 0; i < setBlockRequestCount; i++) {
+                                SetBlockRequest setBlockRequest = asyncSetBlockRequestQueue.take();
+                                asyncResponseQueue.put(setBlock(
+                                        setBlockRequest.world,
+                                        setBlockRequest.x,
+                                        setBlockRequest.y,
+                                        setBlockRequest.z,
+                                        setBlockRequest.block
+                                ));
+                                latch.countDown();
+                            }
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+
+                    }
+                }.runTask(papyAPI);
+
+                log_debug("Waiting for tasks to finish...");
+
+                latch.await();
+
+                if (syncMsgEnabled)
+                    log_info("Sync finished.");
+                else
+                    log_debug("Sync finished.");
+
+                StringBuilder stringBuilder = new StringBuilder();
+                for (int i = 0; i < asyncResponseQueue.size(); i++) {
+                    PapyResponse asyncResponse = asyncResponseQueue.take();
+
+                    stringBuilder.append(asyncResponse.success);
+                    stringBuilder.append(';');
+                    stringBuilder.append(asyncResponse.message);
+                    stringBuilder.append('\t');
+                }
+                return new PapyResponse(true, stringBuilder.toString());
             }
         }
 
@@ -111,6 +195,11 @@ public final class PapyAPI extends JavaPlugin implements PapyRequestDispatcher, 
 
     }
 
+    @Override
+    public void log_debug(String msg) {
+        if(debugEnabled)
+            logger.log(Level.INFO, msg);
+    }
     @Override
     public void log_info(String msg) {
         logger.log(Level.INFO, msg);
@@ -150,7 +239,52 @@ public final class PapyAPI extends JavaPlugin implements PapyRequestDispatcher, 
             }
 
             case "info" -> {
-                sender.sendMessage(Component.text("PapyServer info:\nServer state: "+papyServer.state));
+                sender.sendMessage(Component.text("PapyServer info:", NamedTextColor.AQUA));
+                sender.sendMessage(Component.text("Server state: "+papyServer.state));
+                if (papyServer == null)
+                    break;
+                if (papyServer.serverThread != null) {
+                    StackTraceElement[] st = papyServer.serverThread.getStackTrace();
+                    sender.sendMessage(Component.text("ServerThread:", NamedTextColor.YELLOW));
+                    for (StackTraceElement s : st) {
+                        sender.sendMessage(Component.text(s.toString()));
+                    }
+
+                }
+                if (papyServer.dispatcherThread != null) {
+                    StackTraceElement[] st = papyServer.dispatcherThread.getStackTrace();
+                    sender.sendMessage(Component.text("DispatcherThread:", NamedTextColor.YELLOW));
+                    for (StackTraceElement s : st) {
+                        sender.sendMessage(Component.text(s.toString()));
+                    }
+
+                }
+                if (papyServer.responseThread != null) {
+                    StackTraceElement[] st = papyServer.responseThread.getStackTrace();
+                    sender.sendMessage(Component.text("ResponseThread:", NamedTextColor.YELLOW));
+                    for (StackTraceElement s : st) {
+                        sender.sendMessage(Component.text(s.toString()));
+                    }
+
+                }
+            }
+            case "debug" -> {
+                debugEnabled = !debugEnabled;
+                Component c;
+                if (debugEnabled)
+                    c = Component.text("enabled", NamedTextColor.GREEN, TextDecoration.BOLD);
+                else
+                    c = Component.text("disabled", NamedTextColor.RED, TextDecoration.BOLD);
+                sender.sendMessage(Component.text("Debug: ").append(c));
+            }
+            case "syncmsg" -> {
+                syncMsgEnabled = !syncMsgEnabled;
+                Component c;
+                if (syncMsgEnabled)
+                    c = Component.text("enabled", NamedTextColor.GREEN, TextDecoration.BOLD);
+                else
+                    c = Component.text("disabled", NamedTextColor.RED, TextDecoration.BOLD);
+                sender.sendMessage(Component.text("Sync messages: ").append(c));
             }
         }
 
