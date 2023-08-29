@@ -21,32 +21,33 @@ C LL "SUCCESS\nInfo\n"
          OR  
 C LL "FAILURE\nInfo\n"  
 
-## Handshake
+## Current functions
+
+### Handshake
 1. S "PapyAPI\n"  
 2. C "SUCCESS\n"  
 
-## Ping
+### Ping
 1. S L "ping"  
 2. RESPONSE
 
-## Disconnect
+### Disconnect
 1. S L "disconnect"  
 2. RESPONSE  
 
-## Run command  
+### Run command  
 1. S L "runcmd command"  
 2. RESPONSE  
 
-## Set block  
+### Set block  
 1. S L "setblock world x y z block"  
 2. RESPONSE  
 
-## Set block (async)  
+### Set block (async)  
 1. S L "async\_setblock world x y z block"  
 2. RESPONSE  
 
-## Synchronize  
+### Synchronize  
 1. S L "sync"  
 2. RESPONSE  
-
 
